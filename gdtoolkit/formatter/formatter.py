@@ -1,3 +1,4 @@
+import importlib
 import re
 from typing import List, Optional
 
@@ -19,13 +20,31 @@ from .comments import (
 )
 
 
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
 def format_code(
     gdscript_code: str,
     max_line_length: int,
     spaces_for_indent: Optional[int] = None,
     parse_tree: Optional[Tree] = None,
     comment_parse_tree: Optional[Tree] = None,
+    range_start: Optional[int] = None,
+    range_end: Optional[int] = None,
 ) -> str:
+    if range_start is not None and range_end is not None:
+        # imported lazily/dynamically to avoid a static import cycle
+        # (range_format imports this module)
+        range_format = importlib.import_module(".range_format", "gdtoolkit.formatter")
+        outcome = range_format.format_code_in_range(
+            gdscript_code,
+            range_start,
+            range_end,
+            max_line_length,
+            spaces_for_indent=spaces_for_indent,
+            parse_tree=parse_tree,
+            comment_parse_tree=comment_parse_tree,
+        )
+        return outcome.code
+
     parse_tree = (
         parse_tree
         if parse_tree is not None

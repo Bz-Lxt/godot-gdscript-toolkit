@@ -7,6 +7,7 @@ from ..parser import parser
 from .formatter import format_code
 from .comments import gather_comments
 from .expression_to_str import expression_to_str
+from .range_format import RangeFormattingOutcome, format_code_in_range
 from .exceptions import (
     TreeInvariantViolation,
     FormattingStabilityViolation,
@@ -178,3 +179,43 @@ def check_comment_persistence(
             for comment_after_formatting in comments_after_formatting
         ):
             raise CommentPersistenceViolation(original_comment)
+
+
+# pylint: disable-next=too-many-arguments,too-many-positional-arguments
+def check_range_formatting_safety(
+    given_code: str,
+    outcome: RangeFormattingOutcome,
+    max_line_length: int,
+    spaces_for_indent: Optional[int],
+    given_code_parse_tree: Optional[Tree] = None,
+    given_code_comment_parse_tree: Optional[Tree] = None,
+) -> None:
+    """Range counterpart of ``check_formatting_safety``."""
+    if outcome.formatted_range is None:
+        return
+    result_code = outcome.code
+    result_code_parse_tree = parser.parse(result_code, gather_metadata=True)
+    result_code_comment_parse_tree = parser.parse_comments(result_code)
+    check_comment_persistence(
+        given_code,
+        result_code,
+        given_code_comment_parse_tree=given_code_comment_parse_tree,
+        formatted_code_comment_parse_tree=result_code_comment_parse_tree,
+    )
+    check_tree_invariant(
+        given_code,
+        result_code,
+        given_code_parse_tree=given_code_parse_tree,
+        formatted_code_parse_tree=result_code_parse_tree,
+    )
+    repeated = format_code_in_range(
+        result_code,
+        outcome.formatted_range.start,
+        outcome.formatted_range.end,
+        max_line_length,
+        spaces_for_indent=spaces_for_indent,
+        parse_tree=result_code_parse_tree,
+        comment_parse_tree=result_code_comment_parse_tree,
+    )
+    if repeated.code != result_code:
+        raise FormattingStabilityViolation

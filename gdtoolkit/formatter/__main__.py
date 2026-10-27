@@ -17,12 +17,17 @@ Options:
   -f --fast                  Skip safety checks.
   -l --line-length=<int>     How many characters per line to allow.
   -s --use-spaces=<int>      Use spaces for indent instead of tabs.
+  -r --range=<start-end>     Format only the given inclusive 1-based line
+                             range (a single line or 'START-END'); it is
+                             expanded to the smallest complete syntactic
+                             unit. Use with one file or STDIN.
   -h --help                  Show this screen.
   --version                  Show version.
   --dump-default-config      Dump default config to 'gdformatrc' file.
 
 Examples:
   echo 'pass' | gdformat -   # reads from STDIN
+  gdformat --range=10-12 path/to/script.gd
 """
 
 import sys
@@ -38,7 +43,13 @@ from docopt import docopt
 import lark
 import yaml
 
-from gdtoolkit.formatter import format_code, check_formatting_safety, DEFAULT_CONFIG
+from gdtoolkit.formatter import (
+    format_code,
+    check_formatting_safety,
+    check_range_formatting_safety,
+    DEFAULT_CONFIG,
+)
+from gdtoolkit.formatter.range_format import format_code_in_range
 from gdtoolkit.formatter.exceptions import (
     TreeInvariantViolation,
     FormattingStabilityViolation,
@@ -72,9 +83,18 @@ def main():
     _log_config_entries(config)
     _update_config_with_missing_entries_inplace(config)
 
+    paths = arguments["<path>"]
+    line_range = _parse_range(arguments["--range"])
+    if line_range is not None and paths != ["-"] and len(paths) != 1:
+        print("--range can only be used with a single file or STDIN", file=sys.stderr)
+        sys.exit(1)
+
     files: List[str] = find_gd_files_from_paths(
-        arguments["<path>"], excluded_directories=set(config["excluded_directories"])
+        paths, excluded_directories=set(config["excluded_directories"])
     )
+    if line_range is not None and files != ["-"] and len(files) != 1:
+        print("--range can only be used with a single file", file=sys.stderr)
+        sys.exit(1)
 
     line_length = (
         int(arguments["--line-length"])
@@ -95,13 +115,45 @@ def main():
     )
 
     if files == ["-"]:
-        _format_stdin(line_length, spaces_for_indent, safety_checks)
+        _format_stdin(
+            line_length, spaces_for_indent, safety_checks, line_range
+        )
     elif arguments["--check"]:
         _check_files_formatting(
-            files, line_length, spaces_for_indent, arguments["--diff"], safety_checks
+            files,
+            line_length,
+            spaces_for_indent,
+            arguments["--diff"],
+            safety_checks,
+            line_range,
         )
     else:
-        _format_files(files, line_length, spaces_for_indent, safety_checks)
+        _format_files(
+            files, line_length, spaces_for_indent, safety_checks, line_range
+        )
+
+
+def _parse_range(value: Optional[str]) -> Optional[Tuple[int, int]]:
+    if not value:
+        return None
+    try:
+        if "-" in value:
+            start_str, end_str = value.split("-", 1)
+            start, end = int(start_str), int(end_str)
+        else:
+            start = end = int(value)
+    except ValueError:
+        print(
+            "Invalid --range value, expected a line number or 'START-END'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if start < 1 or end < start:
+        print(
+            "Invalid --range value, expected 1 <= START <= END", file=sys.stderr
+        )
+        sys.exit(1)
+    return start, end
 
 
 def _dump_default_config() -> None:
@@ -155,24 +207,33 @@ def _update_config_with_missing_entries_inplace(config: dict) -> None:
 
 
 def _format_stdin(
-    line_length: int, spaces_for_indent: Optional[int], safety_checks: bool
+    line_length: int,
+    spaces_for_indent: Optional[int],
+    safety_checks: bool,
+    line_range: Optional[Tuple[int, int]] = None,
 ) -> None:
     code = sys.stdin.read()
     success, _, formatted_code = _format_code(
-        code, line_length, spaces_for_indent, "STDIN", safety_checks
+        code,
+        line_length,
+        spaces_for_indent,
+        "STDIN",
+        safety_checks,
+        line_range=line_range,
     )
     if not success:
         sys.exit(1)
     print(formatted_code, end="")
 
 
-# pylint: disable-next=too-many-locals
+# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments
 def _check_files_formatting(
     files: List[str],
     line_length: int,
     spaces_for_indent: Optional[int],
     print_diff: bool,
     safety_checks: bool,
+    line_range: Optional[Tuple[int, int]] = None,
 ) -> None:
     formattable_files = set()
     failed_files = set()
@@ -181,7 +242,12 @@ def _check_files_formatting(
             with open(file_path, "r", encoding="utf-8") as handle:
                 code = handle.read()
                 success, actually_formatted, formatted_code = _format_code(
-                    code, line_length, spaces_for_indent, file_path, safety_checks
+                    code,
+                    line_length,
+                    spaces_for_indent,
+                    file_path,
+                    safety_checks,
+                    line_range=line_range,
                 )
                 if success and actually_formatted:
                     print(f"would reformat {file_path}", file=sys.stderr)
@@ -228,11 +294,13 @@ def _check_files_formatting(
     sys.exit(1)
 
 
+# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments
 def _format_files(
     files: List[str],
     line_length: int,
     spaces_for_indent: Optional[int],
     safety_checks: bool,
+    line_range: Optional[Tuple[int, int]] = None,
 ) -> None:
     formatted_files = set()
     failed_files = set()
@@ -241,7 +309,12 @@ def _format_files(
             with open(file_path, "r+", encoding="utf-8") as handle:
                 code = handle.read()
                 success, actually_formatted, formatted_code = _format_code(
-                    code, line_length, spaces_for_indent, file_path, safety_checks
+                    code,
+                    line_length,
+                    spaces_for_indent,
+                    file_path,
+                    safety_checks,
+                    line_range=line_range,
                 )
                 if success and actually_formatted:
                     print(f"reformatted {file_path}")
@@ -270,12 +343,14 @@ def _format_files(
     sys.exit(0 if len(failed_files) == 0 else 1)
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-branches
 def _format_code(
     code: str,
     line_length: int,
     spaces_for_indent: Optional[int],
     file_path: str,
     safety_checks: bool,
+    line_range: Optional[Tuple[int, int]] = None,
 ) -> Tuple[bool, bool, str]:
     success = True
     actually_formatted = False
@@ -284,24 +359,50 @@ def _format_code(
     try:
         code_parse_tree = parser.parse(code, gather_metadata=True)
         comment_parse_tree = parser.parse_comments(code)
-        formatted_code = format_code(
-            gdscript_code=code,
-            max_line_length=line_length,
-            spaces_for_indent=spaces_for_indent,
-            parse_tree=code_parse_tree,
-            comment_parse_tree=comment_parse_tree,
-        )
-        if formatted_code != code:
-            actually_formatted = True
-            if safety_checks:
-                check_formatting_safety(
-                    code,
-                    formatted_code,
-                    max_line_length=line_length,
-                    spaces_for_indent=spaces_for_indent,
-                    given_code_parse_tree=code_parse_tree,
-                    given_code_comment_parse_tree=comment_parse_tree,
-                )
+        if line_range is not None:
+            outcome = format_code_in_range(
+                code,
+                line_range[0],
+                line_range[1],
+                line_length,
+                spaces_for_indent=spaces_for_indent,
+                parse_tree=code_parse_tree,
+                comment_parse_tree=comment_parse_tree,
+            )
+            formatted_code = outcome.code
+            if formatted_code != code:
+                actually_formatted = True
+                if safety_checks:
+                    check_range_formatting_safety(
+                        code,
+                        outcome,
+                        max_line_length=line_length,
+                        spaces_for_indent=spaces_for_indent,
+                        given_code_parse_tree=code_parse_tree,
+                        given_code_comment_parse_tree=comment_parse_tree,
+                    )
+        else:
+            formatted_code = format_code(
+                gdscript_code=code,
+                max_line_length=line_length,
+                spaces_for_indent=spaces_for_indent,
+                parse_tree=code_parse_tree,
+                comment_parse_tree=comment_parse_tree,
+            )
+            if formatted_code != code:
+                actually_formatted = True
+                if safety_checks:
+                    check_formatting_safety(
+                        code,
+                        formatted_code,
+                        max_line_length=line_length,
+                        spaces_for_indent=spaces_for_indent,
+                        given_code_parse_tree=code_parse_tree,
+                        given_code_comment_parse_tree=comment_parse_tree,
+                    )
+    except ValueError as exception:
+        success = False
+        print(f"{file_path}: {exception}", file=sys.stderr)
     except lark.exceptions.UnexpectedToken as exception:
         success = False
         print(

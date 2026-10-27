@@ -9,6 +9,7 @@ from .safety_checks import (  # noqa: F401
     check_tree_invariant,
     check_formatting_stability,
     check_comment_persistence,
+    check_range_formatting_safety,
     LoosenTreeTransformer,
 )
 

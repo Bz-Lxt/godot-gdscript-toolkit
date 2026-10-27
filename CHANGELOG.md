@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+ - Added `--range <start-end>` option to `gdformat` for formatting only the smallest complete syntactic unit covering the given line range; every byte outside the range is preserved
+
 ## [4.5.0] 2025-10-09
 
 ### Added
